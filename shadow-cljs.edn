@@ -1,0 +1,16 @@
+{:source-paths
+ ["src/dev"
+  "src/main"
+  "src/test"]
+ :dependencies
+ []
+ :builds
+ {:script
+  {:target :node-script
+   :main lemondronor.cooleradar/main
+   :output-to "out/script.js"}
+  :test
+  {:target    :node-test
+   :output-to "out/node-tests.js"
+   ;;:ns-regexp "-spec$"
+   :autorun   true}}}

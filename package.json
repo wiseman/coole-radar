@@ -1,0 +1,13 @@
+{
+  "name": "coole-radar",
+  "version": "0.0.1",
+  "private": true,
+  "devDependencies": {
+    "shadow-cljs": "^2.8.68"
+  },
+  "dependencies": {
+    "blessed": "^0.1.81",
+    "blessed-contrib": "^4.8.18",
+    "request": "^2.88.0"
+  }
+}
