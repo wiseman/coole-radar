@@ -92,7 +92,7 @@
   (let [ctx (.-ctx canvas)
         w (.-width canvas)
         h (.-height canvas)
-        theta (bearing->angle (:bearing radar))
+        theta (+ Math/PI (- (bearing->angle (:bearing radar))))
         x (* (/ w 2) (Math/cos theta))
         y (* (/ h 2) (Math/sin theta))]
     (set! (.-fillStyle ctx) "black")
@@ -153,34 +153,18 @@
                                                     1 :fixed
                                                     4 :heli
                                                     :fixed)
-                                            :dist (get ac "Dst")
-                                            :bearing (get ac "Brng")
                                             :label (or (get ac "Reg")
                                                        (get ac "Icao"))}
                                            nil)))
+                                  (map (fn [ac]
+                                         (assoc ac
+                                                :bearing (bearing ac radar)
+                                                :distance (distance ac radar))))
                                   (filter identity)
-                                  (filter #(let [d (:dist %)]
+                                  (filter #(let [d (:distance %)]
                                              (and d (< d @radar-range-km_)))))]
                   (reset! aircraft-truth_ planes))
                 (println "WOO BAD RESPONSE" error response body)))))))
-
-
-(defn plot-frame [canvas color msg]
-  (let [ctx (.-ctx canvas)
-        w (- (* 2 (.-width canvas)) 12)
-        h (* 4 (.-height canvas))]
-    (.scale ctx 1 1)
-    (set! (.-strokeStyle ctx) color)
-    (.moveTo ctx 0 0)
-    (.beginPath ctx)
-    (.lineTo ctx 0 0)
-    (.lineTo ctx 0 (- h 1))
-    (.lineTo ctx (- w 1) (- h 1))
-    (.lineTo ctx (- w 1) 0)
-    (.lineTo ctx 0 0)
-    (.stroke ctx)
-    (.fillText ctx msg 0 0)
-    (.fillText ctx (str (.-_scale canvas) " ") (- w 1) 0)))
 
 
 (def radars
@@ -191,17 +175,30 @@
   (radars spec))
 
 
+(defn age->color [age]
+  ;;'#a12f01'
+  (let [g (Math/round (* 255 (/ (- 15000 age) 15000)))
+        g-str (-> g
+                  Math/round
+                  (.toString 16)
+                  (.padStart 2 "0"))
+        color (str "#00" g-str "00")]
+    [0 g 0]))
+
 (defn plot-aircraft [aircraft radar canvas]
   (let [ctx (.-ctx canvas)
         [cx cy] (pos->canvas-coords aircraft radar @radar-range-km_ canvas)
+        [w h] [(.-width canvas) (.-height canvas)]
+        [cw ch] (->canvas-coords canvas w h)
         brng (* (/ 180 Math/PI) (bearing radar aircraft))
         d (distance radar aircraft)
         icon (if (= (:type aircraft) :fixed)
                "✈"
                "x")
         alt (:alt aircraft)]
-    (when (and (> cx 0) (> cy 0))
-      (set! (.-fillStyle ctx) "green")
+    (when (and (> cx 0) (> cy 0) (< cx cw) (< cy ch))
+      (set! (.-fillStyle ctx) (clj->js (age->color (:illuminated-age aircraft))))
+      ;;(set! (.-fillStyle ctx) "green")
       (.fillText ctx icon cx cy)
       (.fillText ctx (:label aircraft) cx (+ 4 cy))
       ;;(.fillText ctx (str (.toFixed cx "0") " " (.toFixed cy "0")) cx (+ 8 cy))
@@ -210,7 +207,8 @@
       ;;   (.fillText ctx (str alt) cx (+ 8 cy)))
       )))
 
-(def airports [{:lat 34.1983 :lon -118.3574 :label "BUR" :icon "🛬"}])
+(def airports [{:label "BUR" :lat 34.1983 :lon -118.3574 :icon "🛬"}
+               {:label "LAX" :lat 33.9416 :lon -118.4085 :icon "🛬"}])
 
 
 (defn plot-airport [airport radar canvas]
@@ -229,6 +227,23 @@
   (doseq [airport airports]
     (plot-airport airport radar canvas)))
 
+(def hits_ (atom []))
+
+(defn update-hits [hits radar now truth]
+  (let [radar-bearing1 (normalize-bearing (:prev-bearing radar))
+        radar-bearing2 (normalize-bearing (:bearing radar))
+        illuminated (->> truth
+                         (filter #(<= radar-bearing1 (normalize-bearing (:bearing %)) radar-bearing2))
+                         (map #(assoc % :illuminated-time now)))]
+    (->> hits
+         (concat illuminated)
+         (map #(assoc % :illuminated-age (- now (:illuminated-time %))))
+         (filter #(< (:illuminated-age %) (* 15 1000)))
+         (sort-by :illuminated-age)
+         reverse)))
+
+
+(defn render-hits [now hits])
 
 (defn main [& args]
   (let [screen (blessed/screen)
@@ -239,10 +254,11 @@
         radar_ (atom (get-radar "521circle7"))]
     (letfn [(update [n]
               (let [now (.getTime (js/Date.))]
-                (swap! radar_ #(update-radar % now))
+                (swap! radar_ update-radar now)
+                (swap! hits_ update-hits @radar_ now @aircraft-truth_)
                 (draw-radar canvas @radar_)
                 (plot-airports @radar_ canvas)
-                (doseq [aircraft @aircraft-truth_]
+                (doseq [aircraft @hits_]
                   (plot-aircraft aircraft @radar_ canvas))
                 (.render screen)
                 (js/setTimeout #(update (+ n 0.02)) 30)))]
