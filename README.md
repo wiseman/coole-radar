@@ -1,5 +1,7 @@
 # coole-radar
 
+![Screenshot](screenshot.png?raw=true "Screenshot")
+
 ## To run:
 
 ```
