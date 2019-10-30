@@ -80,24 +80,6 @@
         cy (- ch (+ (/ ch 2) (* y-multiplier y)))]
     [cx cy]))
 
-(defn plot-aircraft [aircraft radar canvas]
-  (let [ctx (.-ctx canvas)
-        [cx cy] (pos->canvas-coords aircraft radar radar-range-km canvas)
-        brng (* (/ 180 Math/PI) (bearing radar aircraft))
-        d (distance radar aircraft)
-        icon (if (= (:type aircraft) :fixed)
-               "✈"
-               "x")
-        alt (:alt aircraft)]
-    (when (and (> cx 0) (> cy 0))
-      (set! (.-fillStyle ctx) "green")
-      (.fillText ctx icon cx cy)
-      (.fillText ctx (:label aircraft) cx (+ 4 cy))
-      ;;(.fillText ctx (str (.toFixed cx "0") " " (.toFixed cy "0")) cx (+ 8 cy))
-      ;;(.fillText ctx (str (.toFixed brng "0") " " (.toFixed d "0") ":" (:dist aircraft)) cx (+ 12 cy))
-      ;; (when alt
-      ;;   (.fillText ctx (str alt) cx (+ 8 cy)))
-      )))
 
 
 (def aircraft-truth_ (atom []))
@@ -163,6 +145,45 @@
     (radars spec)))
 
 
+(defn plot-aircraft [aircraft radar canvas]
+  (let [ctx (.-ctx canvas)
+        [cx cy] (pos->canvas-coords aircraft radar radar-range-km canvas)
+        brng (* (/ 180 Math/PI) (bearing radar aircraft))
+        d (distance radar aircraft)
+        icon (if (= (:type aircraft) :fixed)
+               "✈"
+               "x")
+        alt (:alt aircraft)]
+    (when (and (> cx 0) (> cy 0))
+      (set! (.-fillStyle ctx) "green")
+      (.fillText ctx icon cx cy)
+      (.fillText ctx (:label aircraft) cx (+ 4 cy))
+      ;;(.fillText ctx (str (.toFixed cx "0") " " (.toFixed cy "0")) cx (+ 8 cy))
+      ;;(.fillText ctx (str (.toFixed brng "0") " " (.toFixed d "0") ":" (:dist aircraft)) cx (+ 12 cy))
+      ;; (when alt
+      ;;   (.fillText ctx (str alt) cx (+ 8 cy)))
+      )))
+
+(def airports [{:lat 34.1983 :lon -118.3574 :label "BUR" :icon "🛬"}])
+
+
+(defn plot-airport [airport radar canvas]
+  (let [ctx (.-ctx canvas)
+        [cx cy] (pos->canvas-coords airport radar radar-range-km canvas)
+        brng (* (/ 180 Math/PI) (bearing radar airport))
+        d (distance radar airport)
+        icon "🛬"]
+    (when (and (> cx 0) (> cy 0))
+      (set! (.-fillStyle ctx) "green")
+      (.fillText ctx icon cx cy)
+      (.fillText ctx (:label airport) cx (+ 4 cy)))))
+
+
+(defn plot-airports [radar canvas]
+  (doseq [airport airports]
+    (plot-airport airport radar canvas)))
+
+
 (defn main [& args]
   (let [screen (blessed/screen)
         canvas (bcontrib/canvas (clj->js {:width "100%"
@@ -172,6 +193,7 @@
         radar (get-radar "521circle7")]
     (letfn [(update [n]
               (draw-radar canvas n)
+              (plot-airports radar canvas)
               (doseq [aircraft @aircraft-truth_]
                 (plot-aircraft aircraft radar canvas))
               (.render screen)
