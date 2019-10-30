@@ -11,3 +11,5 @@ node out/script.js
 ```
 
 Press q or ESC or ctrl-c to exit.
+
+`✈` is a fixed wing aircraft, `x` is a helicopter.
