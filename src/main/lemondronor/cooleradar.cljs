@@ -100,7 +100,7 @@
       )))
 
 
-(def planes_ (atom []))
+(def aircraft-truth_ (atom []))
 
 (defn update-planes [radar]
   (let [lat (:lat radar)
@@ -132,7 +132,7 @@
                                   (filter identity)
                                   (filter #(let [d (:dist %)]
                                              (and d (< d radar-range-km)))))]
-                  (reset! planes_ planes))
+                  (reset! aircraft-truth_ planes))
                 (println "WOO BAD RESPONSE" error response body)))))))
 
 
@@ -158,6 +158,10 @@
   {"yosemite" {:lat 34.133856404730224 :lon -118.19234294423293}
    "521circle7" {:lat 34.1576265 :lon -118.29006930000001}})
 
+(defn get-radar [spec]
+  (if (string? spec)
+    (radars spec)))
+
 
 (defn main [& args]
   (let [screen (blessed/screen)
@@ -165,14 +169,11 @@
                                           :height "100%"
                                           :top 0
                                           :left 0}))
-        ;;radar {:lat 34.1576265 :lon -118.29006930000001}
-        radar {:lat 34.133856404730224 :lon -118.19234294423293}
-        ;;radar {:lat 34.1338 :lon -118.19248}
-        plane {:lat 34.07382 :lon -118.47336 :label "WOO"}]
+        radar (get-radar "521circle7")]
     (letfn [(update [n]
               (draw-radar canvas n)
-              (doseq [plane @planes_]
-                (plot-aircraft plane radar canvas))
+              (doseq [aircraft @aircraft-truth_]
+                (plot-aircraft aircraft radar canvas))
               (.render screen)
               (js/setTimeout #(update (+ n 0.02)) 30))]
       (js/setInterval #(update-planes radar) 1000)
