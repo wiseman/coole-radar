@@ -15,7 +15,7 @@
         lat2 (to-radians (:lat pos2))
         lon1 (to-radians (:lon pos1))
         lon2 (to-radians (:lon pos2))
-        d-lat (to-radians (- lat2 lat1))
+        d-lat (- lat2 lat1)
         d-lon (- lon2 lon1)
         a (+ (* (Math/sin (/ d-lat 2))
                 (Math/sin (/ d-lat 2)))
@@ -37,7 +37,7 @@
         x (- (* (Math/cos lat1) (Math/sin lat2))
              (* (Math/sin lat1) (Math/cos lat2) (Math/cos d-lon)))
         brg (Math/atan2 y x)]
-    brg))
+    (mod (+ brg (* 2 Math/PI)) (* 2 Math/PI))))
 
 (def radar-range-km 30)
 
@@ -83,6 +83,8 @@
 (defn plot-aircraft [aircraft radar canvas]
   (let [ctx (.-ctx canvas)
         [cx cy] (pos->canvas-coords aircraft radar radar-range-km canvas)
+        brng (* (/ 180 Math/PI) (bearing radar aircraft))
+        d (distance radar aircraft)
         icon (if (= (:type aircraft) :fixed)
                "✈"
                "x")
@@ -92,8 +94,10 @@
       (.fillText ctx icon cx cy)
       (.fillText ctx (:label aircraft) cx (+ 4 cy))
       ;;(.fillText ctx (str (.toFixed cx "0") " " (.toFixed cy "0")) cx (+ 8 cy))
-      (when alt
-        (.fillText ctx (str alt) cx (+ 8 cy))))))
+      ;;(.fillText ctx (str (.toFixed brng "0") " " (.toFixed d "0") ":" (:dist aircraft)) cx (+ 12 cy))
+      ;; (when alt
+      ;;   (.fillText ctx (str alt) cx (+ 8 cy)))
+      )))
 
 
 (def planes_ (atom []))
@@ -149,6 +153,12 @@
     (.fillText ctx msg 0 0)
     (.fillText ctx (str (.-_scale canvas) " ") (- w 1) 0)))
 
+
+(def radars
+  {"yosemite" {:lat 34.133856404730224 :lon -118.19234294423293}
+   "521circle7" {:lat 34.1576265 :lon -118.29006930000001}})
+
+
 (defn main [& args]
   (let [screen (blessed/screen)
         canvas (bcontrib/canvas (clj->js {:width "100%"
@@ -156,7 +166,8 @@
                                           :top 0
                                           :left 0}))
         ;;radar {:lat 34.1576265 :lon -118.29006930000001}
-        radar {:lat 34.1338 :lon -118.19248}
+        radar {:lat 34.133856404730224 :lon -118.19234294423293}
+        ;;radar {:lat 34.1338 :lon -118.19248}
         plane {:lat 34.07382 :lon -118.47336 :label "WOO"}]
     (letfn [(update [n]
               (draw-radar canvas n)
