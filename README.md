@@ -15,3 +15,5 @@ node out/script.js
 Press q or ESC or ctrl-c to exit.
 
 `✈` is a fixed wing aircraft, `x` is a helicopter.
+
+Zoom in and out with `+`/`-`. Reset zoom with `0`.

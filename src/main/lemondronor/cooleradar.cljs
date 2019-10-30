@@ -39,7 +39,8 @@
         brg (Math/atan2 y x)]
     (mod (+ brg (* 2 Math/PI)) (* 2 Math/PI))))
 
-(def radar-range-km 30)
+(def initial-radar-range-km 30)
+(def radar-range-km_ (atom initial-radar-range-km))
 
 
 (defn ->canvas-coords [canvas x y]
@@ -113,7 +114,7 @@
                                            nil)))
                                   (filter identity)
                                   (filter #(let [d (:dist %)]
-                                             (and d (< d radar-range-km)))))]
+                                             (and d (< d @radar-range-km_)))))]
                   (reset! aircraft-truth_ planes))
                 (println "WOO BAD RESPONSE" error response body)))))))
 
@@ -147,7 +148,7 @@
 
 (defn plot-aircraft [aircraft radar canvas]
   (let [ctx (.-ctx canvas)
-        [cx cy] (pos->canvas-coords aircraft radar radar-range-km canvas)
+        [cx cy] (pos->canvas-coords aircraft radar @radar-range-km_ canvas)
         brng (* (/ 180 Math/PI) (bearing radar aircraft))
         d (distance radar aircraft)
         icon (if (= (:type aircraft) :fixed)
@@ -169,7 +170,7 @@
 
 (defn plot-airport [airport radar canvas]
   (let [ctx (.-ctx canvas)
-        [cx cy] (pos->canvas-coords airport radar radar-range-km canvas)
+        [cx cy] (pos->canvas-coords airport radar @radar-range-km_ canvas)
         brng (* (/ 180 Math/PI) (bearing radar airport))
         d (distance radar airport)
         icon "🛬"]
@@ -203,5 +204,14 @@
       (.key screen
             #js ["escape" "q" "C-c"]
             #(.exit js/process 0))
+      (.key screen
+            #js ["+" "="]
+            #(swap! radar-range-km_ * 1.1))
+      (.key screen
+            #js ["-" "_"]
+            #(swap! radar-range-km_ * (/ 1 1.1)))
+      (.key screen
+            #js ["0"]
+            #(reset! radar-range-km_ initial-radar-range-km))
       (update 0)
       (.render screen))))
