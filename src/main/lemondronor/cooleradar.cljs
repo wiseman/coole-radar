@@ -9,6 +9,15 @@
 (defn to-radians [a]
   (* a (/ Math/PI 180)))
 
+(defn to-degrees [a]
+  (* a (/ 180 Math/PI)))
+
+
+;; Given two positions (:lat and :lon), calculate the distance (in km)
+;; between them using Haversine.
+;;
+;; Note: Update my stackoverflow answer which has the wrong formula.
+
 (defn distance [pos1 pos2]
   (let [r 6372.8 ;; Radius of the Earth in kilometers.
         lat1 (to-radians (:lat pos1))
@@ -27,6 +36,9 @@
         d (* r c)]
     d))
 
+
+;; Calculate the bearing (not angle) between two positions.
+
 (defn bearing [pos1 pos2]
   (let [lat1 (to-radians (:lat pos1))
         lat2 (to-radians (:lat pos2))
@@ -39,20 +51,50 @@
         brg (Math/atan2 y x)]
     (mod (+ brg (* 2 Math/PI)) (* 2 Math/PI))))
 
-(def initial-radar-range-km 30)
-(def radar-range-km_ (atom initial-radar-range-km))
 
+;; Canvas has a weird coordinate system. See
+;; https://github.com/yaronn/blessed-contrib/blob/4b690bc04fb06ab278cb0f84065ca7001bb26668/lib/widget/canvas.js#L36
+;; and https://github.com/yaronn/blessed-contrib/issues/184
 
 (defn ->canvas-coords [canvas x y]
   [(- (* 2 x) 12) (* 4 y)])
 
 
-(defn draw-radar [canvas n]
+(defn bearing->angle [brg]
+  (- (/ Math/PI 2) brg))
+
+
+(defn normalize-bearing [brg]
+  (mod (+ brg (* Math/PI 2)) (* Math/PI 2)))
+
+
+(def initial-radar-range-km 30)
+(def radar-range-km_ (atom initial-radar-range-km))
+
+
+(defn update-radar [radar now]
+  (let [bearing (or (:bearing radar) 0)
+        prev-update-time (:prev-update-time radar)
+        new-bearing (if prev-update-time
+                      (normalize-bearing
+                       (+ bearing
+                          (* (or (:rpm radar) 5)
+                             (/ (- now prev-update-time) (* 1000 60))
+                             (* 2 Math/PI))))
+                      0)]
+    (assoc radar
+           :prev-bearing bearing
+           :bearing new-bearing
+           :prev-update-time now)))
+
+
+(defn draw-radar [canvas radar]
   (let [ctx (.-ctx canvas)
         w (.-width canvas)
         h (.-height canvas)
-        x (* (/ w 2) (Math/cos n))
-        y (* (/ h 2) (Math/sin n))]
+        theta (bearing->angle (:bearing radar))
+        x (* (/ w 2) (Math/cos theta))
+        y (* (/ h 2) (Math/sin theta))]
     (set! (.-fillStyle ctx) "black")
     (let [[cw ch] (->canvas-coords canvas w h)
           [cx cy] (->canvas-coords canvas x y)]
@@ -69,7 +111,7 @@
 
 (defn pos->canvas-coords [pos origin radar-range-km canvas]
   (let [d (distance origin pos)
-        theta (- (/ Math/PI 2) (bearing origin pos))
+        theta (bearing->angle (bearing origin pos))
         w (.-width canvas)
         h (.-height canvas)
         [cw ch] (->canvas-coords canvas w h)
@@ -82,8 +124,12 @@
     [cx cy]))
 
 
-
 (def aircraft-truth_ (atom []))
+
+(defn debug-seq [msg s]
+  (println msg (count s))
+  s)
+
 
 (defn update-planes [radar]
   (let [lat (:lat radar)
@@ -142,8 +188,7 @@
    "521circle7" {:lat 34.1576265 :lon -118.29006930000001}})
 
 (defn get-radar [spec]
-  (if (string? spec)
-    (radars spec)))
+  (radars spec))
 
 
 (defn plot-aircraft [aircraft radar canvas]
@@ -191,25 +236,27 @@
                                           :height "100%"
                                           :top 0
                                           :left 0}))
-        radar (get-radar "521circle7")]
+        radar_ (atom (get-radar "521circle7"))]
     (letfn [(update [n]
-              (draw-radar canvas n)
-              (plot-airports radar canvas)
-              (doseq [aircraft @aircraft-truth_]
-                (plot-aircraft aircraft radar canvas))
-              (.render screen)
-              (js/setTimeout #(update (+ n 0.02)) 30))]
-      (js/setInterval #(update-planes radar) 1000)
+              (let [now (.getTime (js/Date.))]
+                (swap! radar_ #(update-radar % now))
+                (draw-radar canvas @radar_)
+                (plot-airports @radar_ canvas)
+                (doseq [aircraft @aircraft-truth_]
+                  (plot-aircraft aircraft @radar_ canvas))
+                (.render screen)
+                (js/setTimeout #(update (+ n 0.02)) 30)))]
+      (js/setInterval #(update-planes @radar_) 1000)
       (.append screen canvas)
       (.key screen
             #js ["escape" "q" "C-c"]
             #(.exit js/process 0))
       (.key screen
             #js ["+" "="]
-            #(swap! radar-range-km_ * 1.1))
+            #(swap! radar-range-km_ * (/ 1 1.1)))
       (.key screen
             #js ["-" "_"]
-            #(swap! radar-range-km_ * (/ 1 1.1)))
+            #(swap! radar-range-km_ * 1.1))
       (.key screen
             #js ["0"]
             #(reset! radar-range-km_ initial-radar-range-km))

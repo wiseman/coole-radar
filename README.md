@@ -17,3 +17,10 @@ Press q or ESC or ctrl-c to exit.
 `✈` is a fixed wing aircraft, `x` is a helicopter.
 
 Zoom in and out with `+`/`-`. Reset zoom with `0`.
+
+
+## Development:
+
+```
+npx shadow-cljs watch script test
+```
