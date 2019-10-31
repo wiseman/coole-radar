@@ -69,7 +69,6 @@
 
 
 (def initial-radar-range-km 30)
-(def radar-range-km_ (atom initial-radar-range-km))
 
 
 (defn update-radar [radar now]
@@ -88,8 +87,10 @@
            :prev-update-time now)))
 
 
-(defn draw-radar [canvas radar]
-  (let [ctx (.-ctx canvas)
+(defn render-radar [app]
+  (let [canvas (:canvas app)
+        radar (:radar app)
+        ctx (.-ctx canvas)
         w (.-width canvas)
         h (.-height canvas)
         theta (+ Math/PI (- (bearing->angle (:bearing radar))))
@@ -100,6 +101,9 @@
           [cx cy] (->canvas-coords canvas x y)]
       (.clearRect ctx 0 0 cw ch)
       (set! (.-strokeStyle ctx) "green")
+      (set! (.-fillStyle ctx) "green")
+      (.fillText ctx (str "RNG:" (.toFixed (:radar-range-km app) "1") " KM") 0 0)
+      (.fillText ctx (str "RPM:" (.toFixed (get-in app [:radar :rpm]) "1")) 0 4)
       (.save ctx)
       (.translate ctx (/ cw 2) (/ ch 2))
       (.beginPath ctx)
@@ -124,15 +128,9 @@
     [cx cy]))
 
 
-(def aircraft-truth_ (atom []))
-
-(defn debug-seq [msg s]
-  (println msg (count s))
-  s)
-
-
-(defn update-planes [radar]
-  (let [lat (:lat radar)
+(defn fetch-aircraft-truth [app_]
+  (let [radar (:radar @app_)
+        lat (:lat radar)
         lon (:lon radar)
         url (str "https://vrs.heavymeta.org/VirtualRadar/AircraftList.json?feed=1&lat=" lat "&lng=" lon)
         options (clj->js {:url url
@@ -162,8 +160,8 @@
                                                 :distance (distance ac radar))))
                                   (filter identity)
                                   (filter #(let [d (:distance %)]
-                                             (and d (< d @radar-range-km_)))))]
-                  (reset! aircraft-truth_ planes))
+                                             (and d (< d (:radar-range-km @app_))))))]
+                  (swap! app_ update :aircraft-truth (fn [_] planes)))
                 (println "WOO BAD RESPONSE" error response body)))))))
 
 
@@ -177,7 +175,7 @@
 
 (defn age->color [age]
   ;;'#a12f01'
-  (let [g (Math/round (* 255 (/ (- 15000 age) 15000)))
+  (let [g (Math/round (* 255 (/ (- 20000 age) 20000)))
         g-str (-> g
                   Math/round
                   (.toString 16)
@@ -185,9 +183,11 @@
         color (str "#00" g-str "00")]
     [0 g 0]))
 
-(defn plot-aircraft [aircraft radar canvas]
-  (let [ctx (.-ctx canvas)
-        [cx cy] (pos->canvas-coords aircraft radar @radar-range-km_ canvas)
+(defn render-aircraft [aircraft app]
+  (let [canvas (:canvas app)
+        radar (:radar app)
+        ctx (.-ctx canvas)
+        [cx cy] (pos->canvas-coords aircraft radar (:radar-range-km app) canvas)
         [w h] [(.-width canvas) (.-height canvas)]
         [cw ch] (->canvas-coords canvas w h)
         brng (* (/ 180 Math/PI) (bearing radar aircraft))
@@ -198,22 +198,24 @@
         alt (:alt aircraft)]
     (when (and (> cx 0) (> cy 0) (< cx cw) (< cy ch))
       (set! (.-fillStyle ctx) (clj->js (age->color (:illuminated-age aircraft))))
-      ;;(set! (.-fillStyle ctx) "green")
       (.fillText ctx icon cx cy)
-      (.fillText ctx (:label aircraft) cx (+ 4 cy))
-      ;;(.fillText ctx (str (.toFixed cx "0") " " (.toFixed cy "0")) cx (+ 8 cy))
-      ;;(.fillText ctx (str (.toFixed brng "0") " " (.toFixed d "0") ":" (:dist aircraft)) cx (+ 12 cy))
-      ;; (when alt
-      ;;   (.fillText ctx (str alt) cx (+ 8 cy)))
-      )))
+      (.fillText ctx (:label aircraft) cx (+ 4 cy)))))
+
+
+(defn render-aircrafts [app]
+  (doseq [aircraft (:hits app)]
+    (render-aircraft aircraft app)))
+
 
 (def airports [{:label "BUR" :lat 34.1983 :lon -118.3574 :icon "🛬"}
                {:label "LAX" :lat 33.9416 :lon -118.4085 :icon "🛬"}])
 
 
-(defn plot-airport [airport radar canvas]
-  (let [ctx (.-ctx canvas)
-        [cx cy] (pos->canvas-coords airport radar @radar-range-km_ canvas)
+(defn plot-airport [airport app]
+  (let [radar (:radar app)
+        canvas (:canvas app)
+        ctx (.-ctx canvas)
+        [cx cy] (pos->canvas-coords airport radar (:radar-range-km app) canvas)
         brng (* (/ 180 Math/PI) (bearing radar airport))
         d (distance radar airport)
         icon "🛬"]
@@ -223,13 +225,12 @@
       (.fillText ctx (:label airport) cx (+ 4 cy)))))
 
 
-(defn plot-airports [radar canvas]
+(defn render-airports [app]
   (doseq [airport airports]
-    (plot-airport airport radar canvas)))
+    (plot-airport airport app)))
 
-(def hits_ (atom []))
 
-(defn update-hits [hits radar now truth]
+(defn update-hits [hits radar truth now]
   (let [radar-bearing1 (normalize-bearing (:prev-bearing radar))
         radar-bearing2 (normalize-bearing (:bearing radar))
         illuminated (->> truth
@@ -238,12 +239,46 @@
     (->> hits
          (concat illuminated)
          (map #(assoc % :illuminated-age (- now (:illuminated-time %))))
-         (filter #(< (:illuminated-age %) (* 15 1000)))
+         (filter #(< (:illuminated-age %) (* 30 1000)))
          (sort-by :illuminated-age)
          reverse)))
 
 
-(defn render-hits [now hits])
+(defn update-app [app now]
+  (-> app
+      (update :radar update-radar now)
+      (as-> app (update app :hits update-hits (:radar app) (:aircraft-truth app) now))))
+
+
+(defn render-app [app]
+  (render-radar app)
+  (render-airports app)
+  (render-aircrafts app))
+
+
+(defn add-controls [app_]
+  (let [screen (:screen @app_)
+        update-in-app! (fn [keys & args]
+                         (apply swap! app_ update-in keys args))]
+    (.key screen
+          #js ["escape" "q" "C-c"]
+          #(.exit js/process 0))
+    (.key screen
+          #js ["+" "="]
+          #(update-in-app! [:radar-range-km] * (/ 1 1.1)))
+    (.key screen
+          #js ["-" "_"]
+          #(update-in-app! [:radar-range-km] * 1.1))
+    (.key screen
+          #js ["'"]
+          #(update-in-app! [:radar :rpm] * 1.1))
+    (.key screen
+          #js [";"]
+          #(update-in-app! [:radar :rpm] * (/ 1 1.1)))
+    (.key screen
+          #js ["0"]
+          #(update-in-app! [:radar :rpm] (fn [_] initial-radar-range-km)))))
+
 
 (defn main [& args]
   (let [screen (blessed/screen)
@@ -251,34 +286,21 @@
                                           :height "100%"
                                           :top 0
                                           :left 0}))
-        radar_ (atom (get-radar "521circle7"))]
-    (letfn [(update-all [n]
+        radar (get-radar "521circle7")
+        app_ (atom {:screen screen
+                    :canvas canvas
+                    :radar radar
+                    :radar-range-km initial-radar-range-km
+                    :aircraft-truth []
+                    :hits []})]
+    (letfn [(tick []
               (let [now (.getTime (js/Date.))]
-                (swap! radar_ update-radar now)
-                (swap! hits_ update-hits @radar_ now @aircraft-truth_)
-                (draw-radar canvas @radar_)
-                (plot-airports @radar_ canvas)
-                (doseq [aircraft @hits_]
-                  (plot-aircraft aircraft @radar_ canvas))
+                (swap! app_ update-app now)
+                (render-app @app_)
                 (.render screen)
-                (js/setTimeout #(update-all (+ n 0.02)) 30)))]
-      (js/setInterval #(update-planes @radar_) 5000)
+                (js/setTimeout tick 30)))]
+      (js/setInterval #(fetch-aircraft-truth app_) 5000)
       (.append screen canvas)
-      (.key screen
-            #js ["escape" "q" "C-c"]
-            #(.exit js/process 0))
-      (.key screen
-            #js ["+" "="]
-            #(swap! radar-range-km_ * (/ 1 1.1)))
-      (.key screen
-            #js ["-" "_"]
-            #(swap! radar-range-km_ * 1.1))
-      (.key screen
-            #js ["'"] #(swap! radar_ (fn [r] (update r :rpm (fn [rpm] (* rpm 1.1))))))
-      (.key screen
-            #js [";"] #(swap! radar_ (fn [r] (update r :rpm (fn [rpm] (* rpm (/ 1 1.1)))))))
-      (.key screen
-            #js ["0"]
-            #(reset! radar-range-km_ initial-radar-range-km))
-      (update-all 0)
+      (add-controls app_)
+      (tick)
       (.render screen))))
