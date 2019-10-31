@@ -270,14 +270,14 @@
           #js ["-" "_"]
           #(update-in-app! [:radar-range-km] * 1.1))
     (.key screen
+          #js ["0"]
+          #(update-in-app! [:radar-range-km] (fn [_] initial-radar-range-km)))
+    (.key screen
           #js ["'"]
           #(update-in-app! [:radar :rpm] * 1.1))
     (.key screen
           #js [";"]
-          #(update-in-app! [:radar :rpm] * (/ 1 1.1)))
-    (.key screen
-          #js ["0"]
-          #(update-in-app! [:radar :rpm] (fn [_] initial-radar-range-km)))))
+          #(update-in-app! [:radar :rpm] * (/ 1 1.1)))))
 
 
 (defn main [& args]
