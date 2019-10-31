@@ -168,8 +168,8 @@
 
 
 (def radars
-  {"yosemite" {:lat 34.133856404730224 :lon -118.19234294423293}
-   "521circle7" {:lat 34.1576265 :lon -118.29006930000001}})
+  {"yosemite" {:lat 34.133856404730224 :lon -118.19234294423293 :rpm 5}
+   "521circle7" {:lat 34.1576265 :lon -118.29006930000001 :rpm 5}})
 
 (defn get-radar [spec]
   (radars spec))
@@ -252,7 +252,7 @@
                                           :top 0
                                           :left 0}))
         radar_ (atom (get-radar "521circle7"))]
-    (letfn [(update [n]
+    (letfn [(update-all [n]
               (let [now (.getTime (js/Date.))]
                 (swap! radar_ update-radar now)
                 (swap! hits_ update-hits @radar_ now @aircraft-truth_)
@@ -261,8 +261,8 @@
                 (doseq [aircraft @hits_]
                   (plot-aircraft aircraft @radar_ canvas))
                 (.render screen)
-                (js/setTimeout #(update (+ n 0.02)) 30)))]
-      (js/setInterval #(update-planes @radar_) 1000)
+                (js/setTimeout #(update-all (+ n 0.02)) 30)))]
+      (js/setInterval #(update-planes @radar_) 5000)
       (.append screen canvas)
       (.key screen
             #js ["escape" "q" "C-c"]
@@ -274,7 +274,11 @@
             #js ["-" "_"]
             #(swap! radar-range-km_ * 1.1))
       (.key screen
+            #js ["'"] #(swap! radar_ (fn [r] (update r :rpm (fn [rpm] (* rpm 1.1))))))
+      (.key screen
+            #js [";"] #(swap! radar_ (fn [r] (update r :rpm (fn [rpm] (* rpm (/ 1 1.1)))))))
+      (.key screen
             #js ["0"]
             #(reset! radar-range-km_ initial-radar-range-km))
-      (update 0)
+      (update-all 0)
       (.render screen))))
