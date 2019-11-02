@@ -1,9 +1,16 @@
 (ns lemondronor.cooleradar
   (:require
+   [cemerick.url :as c-url]
+   [cljs.core.async :refer [chan <! >! put! go close!]]
    [cljs.pprint :as pprint]
    ["blessed" :as blessed]
    ["blessed-contrib" :as bcontrib]
+   ["fs" :as fs]
    ["request" :as request]))
+
+
+(defn spit [path data]
+  (fs/appendFileSync path (str data "\n")))
 
 
 (defn to-radians [a]
@@ -88,7 +95,7 @@
 
 
 (defn render-radar [app]
-  (let [canvas (:canvas app)
+  (let [canvas (:radar-canvas app)
         radar (:radar app)
         ctx (.-ctx canvas)
         w (.-width canvas)
@@ -128,41 +135,50 @@
     [cx cy]))
 
 
-(defn fetch-aircraft-truth [app_]
-  (let [radar (:radar @app_)
+(defn vrs-parse-aircraft [json-str app]
+  (let [radar (:radar app)]
+    (->> (get (js->clj (.parse js/JSON json-str)) "acList")
+         (map (fn [ac]
+                (if (contains? ac "Lat")
+                  {:lat (get ac "Lat")
+                   :lon (get ac "Long")
+                   :alt (get ac "Alt")
+                   :speed (get ac "Spd")
+                   :type (condp = (get ac "Species")
+                           1 :fixed
+                           4 :heli
+                           :fixed)
+                   :reg (get ac "Reg")
+                   :icao (get ac "Icao")}
+                  nil)))
+         (filter identity)
+         (map (fn [ac]
+                (assoc ac
+                       :bearing (bearing ac radar)
+                       :distance (distance ac radar))))
+         (filter #(let [d (:distance %)]
+                    (and d (< d (:radar-range-km app))))))))
+
+
+(defn vrs-get-aircraft& [base-url app]
+  (let [radar (:radar app)
         lat (:lat radar)
         lon (:lon radar)
-        url (str "https://vrs.heavymeta.org/VirtualRadar/AircraftList.json?feed=1&lat=" lat "&lng=" lon)
-        options (clj->js {:url url
-                          :gzip true})]
-    (.get request
-          options
-          (fn [error response body]
-            (if error
-              (println "WOO ERROR" error response body)
-              (if (= (.-statusCode response) 200)
-                (let [planes (->> (get (js->clj (.parse js/JSON body)) "acList")
-                                  (map (fn [ac]
-                                         (if (contains? ac "Lat")
-                                           {:lat (get ac "Lat")
-                                            :lon (get ac "Long")
-                                            :alt (get ac "Alt")
-                                            :type (condp = (get ac "Species")
-                                                    1 :fixed
-                                                    4 :heli
-                                                    :fixed)
-                                            :label (or (get ac "Reg")
-                                                       (get ac "Icao"))}
-                                           nil)))
-                                  (map (fn [ac]
-                                         (assoc ac
-                                                :bearing (bearing ac radar)
-                                                :distance (distance ac radar))))
-                                  (filter identity)
-                                  (filter #(let [d (:distance %)]
-                                             (and d (< d (:radar-range-km @app_))))))]
-                  (swap! app_ update :aircraft-truth (fn [_] planes)))
-                (println "WOO BAD RESPONSE" error response body)))))))
+        url (-> (c-url/url base-url "AircraftList.json")
+                (assoc :query {:lat lat :lng lon}))
+        options (clj->js {:url (str url) :gzip true})
+        ch (chan)]
+    (go
+      (.get request
+            options
+            (fn [error response body]
+              (if error
+                (println "WOO ERROR" error response body)
+                (if (= (.-statusCode response) 200)
+                  (let [planes (vrs-parse-aircraft body app)]
+                    (put! ch planes))
+                  (println "Bad response from VRS:" (.-statusCode response) body))))))
+    ch))
 
 
 (def radars
@@ -183,8 +199,9 @@
         color (str "#00" g-str "00")]
     [0 g 0]))
 
+
 (defn render-aircraft [aircraft app]
-  (let [canvas (:canvas app)
+  (let [canvas (:radar-canvas app)
         radar (:radar app)
         ctx (.-ctx canvas)
         [cx cy] (pos->canvas-coords aircraft radar (:radar-range-km app) canvas)
@@ -199,7 +216,7 @@
     (when (and (> cx 0) (> cy 0) (< cx cw) (< cy ch))
       (set! (.-fillStyle ctx) (clj->js (age->color (:illuminated-age aircraft))))
       (.fillText ctx icon cx cy)
-      (.fillText ctx (:label aircraft) cx (+ 4 cy)))))
+      (.fillText ctx (or (:reg aircraft) (:icao aircraft)) cx (+ 4 cy)))))
 
 
 (defn render-aircrafts [app]
@@ -213,7 +230,7 @@
 
 (defn plot-airport [airport app]
   (let [radar (:radar app)
-        canvas (:canvas app)
+        canvas (:radar-canvas app)
         ctx (.-ctx canvas)
         [cx cy] (pos->canvas-coords airport radar (:radar-range-km app) canvas)
         brng (* (/ 180 Math/PI) (bearing radar airport))
@@ -244,6 +261,34 @@
          reverse)))
 
 
+(defn render-info-table [app]
+  (let [table (:info-table app)
+        hits-by-icao (group-by :icao (:hits app))
+        hit-icaos (keys hits-by-icao)
+        truth-by-icao (group-by :icao (:aircraft-truth app))
+        data (->> hit-icaos
+                  (map (fn [icao]
+                         (spit "debug.out" (str icao " " (truth-by-icao icao)))
+                         (let [d (or (first (truth-by-icao icao))
+                                     (last (hits-by-icao icao)))]
+                           (spit "foo.out" d)
+                           [(:icao d)
+                            (:reg d)
+                            (.padStart (.toFixed (/ (:alt d) 100) 0) 3 " ")
+                            (.padStart (.toFixed (:speed d) 0) 3 " ")
+                            (.padStart (.toFixed (:distance d) 0) 3 " ")
+                            (:distance d)])))
+                  (sort-by last)
+                  (map butlast))]
+    (when (seq (:hits app))
+      (.setData table (clj->js {:headers ["ICAO" "REG" "ALT" "SPD" "DST"] :data data})))))
+
+
+(defn debug-println [x msg]
+  (spit "debug.out" (str msg x))
+  x)
+
+
 (defn update-app [app now]
   (-> app
       (update :radar update-radar now)
@@ -252,6 +297,7 @@
 
 (defn render-app [app]
   (render-radar app)
+  (render-info-table app)
   (render-airports app)
   (render-aircrafts app))
 
@@ -282,13 +328,16 @@
 
 (defn main [& args]
   (let [screen (blessed/screen)
-        canvas (bcontrib/canvas (clj->js {:width "100%"
-                                          :height "100%"
-                                          :top 0
-                                          :left 0}))
+        grid (bcontrib/grid. #js {"rows" 12 "cols" 12 "screen" screen})
+        radar-canvas (.set grid 0 0 6 6 bcontrib/canvas {})
+        table (.set grid 6 0 6 6 bcontrib/table (clj->js {:columnWidth [7 7 4 4 4]
+                                                          :interactive true}))
         radar (get-radar "521circle7")
+        vrs-url (cond-> (first args)
+                  (not (.endsWith "/")) (str "/"))
         app_ (atom {:screen screen
-                    :canvas canvas
+                    :radar-canvas radar-canvas
+                    :info-table table
                     :radar radar
                     :radar-range-km initial-radar-range-km
                     :aircraft-truth []
@@ -299,8 +348,11 @@
                 (render-app @app_)
                 (.render screen)
                 (js/setTimeout tick 30)))]
-      (js/setInterval #(fetch-aircraft-truth app_) 5000)
-      (.append screen canvas)
+      (js/setInterval
+       #(go
+          (let [aircraft-truth (<! (vrs-get-aircraft& vrs-url @app_))]
+            (swap! app_ assoc :aircraft-truth aircraft-truth)))
+       1000)
       (add-controls app_)
       (tick)
       (.render screen))))
