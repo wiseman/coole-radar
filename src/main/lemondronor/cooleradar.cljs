@@ -266,6 +266,10 @@
         hits-by-icao (group-by :icao (:hits app))
         hit-icaos (keys hits-by-icao)
         truth-by-icao (group-by :icao (:aircraft-truth app))
+        fmt (fn [v w xform]
+              (if v
+                (-> v xform (.toFixed 0) (.padStart w " "))
+                ""))
         data (->> hit-icaos
                   (map (fn [icao]
                          (spit "debug.out" (str icao " " (truth-by-icao icao)))
@@ -274,14 +278,14 @@
                            (spit "foo.out" d)
                            [(:icao d)
                             (:reg d)
-                            (.padStart (.toFixed (/ (:alt d) 100) 0) 3 " ")
-                            (.padStart (.toFixed (:speed d) 0) 3 " ")
-                            (.padStart (.toFixed (:distance d) 0) 3 " ")
+                            (fmt (:alt d) 3 #(/ % 100))
+                            (fmt (:speed d) 3 identity)
+                            (fmt (:distance d) 3 identity)
                             (:distance d)])))
                   (sort-by last)
                   (map butlast))]
     (when (seq (:hits app))
-      (.setData table (clj->js {:headers ["ICAO" "REG" "ALT" "SPD" "DST"] :data data})))))
+      (.setData table (clj->js {:headers ["ICAO" "REG" "ALT" "SPD" "DIST"] :data data})))))
 
 
 (defn debug-println [x msg]
@@ -298,8 +302,8 @@
 (defn render-app [app]
   (render-radar app)
   (render-info-table app)
-  (render-airports app)
-  (render-aircrafts app))
+  (render-aircrafts app)
+  (render-airports app))
 
 
 (defn add-controls [app_]
@@ -334,7 +338,8 @@
                                                           :interactive true}))
         radar (get-radar "521circle7")
         vrs-url (cond-> (first args)
-                  (not (.endsWith "/")) (str "/"))
+                  (not (.endsWith "/"))
+                  (str "/"))
         app_ (atom {:screen screen
                     :radar-canvas radar-canvas
                     :info-table table
