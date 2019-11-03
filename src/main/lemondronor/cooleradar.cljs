@@ -149,6 +149,8 @@
                            4 :heli
                            :fixed)
                    :reg (get ac "Reg")
+                   :callsign (get ac "Call")
+                   :squawk (get ac "Sqk")
                    :icao (get ac "Icao")}
                   nil)))
          (filter identity)
@@ -224,8 +226,8 @@
     (render-aircraft aircraft app)))
 
 
-(def airports [{:label "BUR" :lat 34.1983 :lon -118.3574 :icon "🛬"}
-               {:label "LAX" :lat 33.9416 :lon -118.4085 :icon "🛬"}])
+(def airports [{:label "BUR" :lat 34.1983 :lon -118.3574 :icon "#"}
+               {:label "LAX" :lat 33.9416 :lon -118.4085 :icon "#"}])
 
 
 (defn plot-airport [airport app]
@@ -235,7 +237,7 @@
         [cx cy] (pos->canvas-coords airport radar (:radar-range-km app) canvas)
         brng (* (/ 180 Math/PI) (bearing radar airport))
         d (distance radar airport)
-        icon "🛬"]
+        icon "#"]
     (when (and (> cx 0) (> cy 0))
       (set! (.-fillStyle ctx) "green")
       (.fillText ctx icon cx cy)
@@ -277,7 +279,9 @@
                                      (last (hits-by-icao icao)))]
                            (spit "foo.out" d)
                            [(:icao d)
-                            (:reg d)
+                            (or (:reg d) "")
+                            (or (:callsign d) "")
+                            (or (:squawk d) "")
                             (fmt (:alt d) 3 #(/ % 100))
                             (fmt (:speed d) 3 identity)
                             (fmt (:distance d) 3 identity)
@@ -285,7 +289,7 @@
                   (sort-by last)
                   (map butlast))]
     (when (seq (:hits app))
-      (.setData table (clj->js {:headers ["ICAO" "REG" "ALT" "SPD" "DIST"] :data data})))))
+      (.setData table (clj->js {:headers ["ICAO" "REG" "CALL" "SQWK" "ALT" " SPD" "DIST"] :data data})))))
 
 
 (defn debug-println [x msg]
@@ -333,9 +337,15 @@
 (defn main [& args]
   (let [screen (blessed/screen)
         grid (bcontrib/grid. #js {"rows" 12 "cols" 12 "screen" screen})
-        radar-canvas (.set grid 0 0 6 6 bcontrib/canvas {})
-        table (.set grid 6 0 6 6 bcontrib/table (clj->js {:columnWidth [7 7 4 4 4]
-                                                          :interactive true}))
+        radar-canvas (.set grid 0 0 6 6 bcontrib/canvas
+                           (clj->js {:label "SCOPE"}))
+        table (.set grid 6 0 6 6 bcontrib/table
+                    (clj->js {:columnWidth [6 8 7 4 4 4 4]
+                              :columnSpacing 5
+                              :interactive true
+                              :label "CURRENT AICRAFT" }))
+        image (.set grid 0 6 6 6 blessed/ANSIImage
+                    (clj->js {:label "SELECTED IMAGE"}))
         radar (get-radar "521circle7")
         vrs-url (cond-> (first args)
                   (not (.endsWith "/"))
@@ -359,5 +369,6 @@
             (swap! app_ assoc :aircraft-truth aircraft-truth)))
        1000)
       (add-controls app_)
+      (.setImage image "/Users/wiseman/Desktop/001497187.jpg")
       (tick)
       (.render screen))))
