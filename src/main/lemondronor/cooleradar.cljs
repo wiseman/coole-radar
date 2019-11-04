@@ -257,7 +257,7 @@
   (radars spec))
 
 
-(def max-age-ms (* 15 1000))
+(def max-age-ms (* 8 1000))
 
 
 (defn age->color [age]
