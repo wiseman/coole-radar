@@ -6,11 +6,83 @@
    ["blessed" :as blessed]
    ["blessed-contrib" :as bcontrib]
    ["fs" :as fs]
-   ["request" :as request]))
+   ["request" :as request]
+   ["tmp" :as tmp]))
 
 
 (defn spit [path data]
   (fs/appendFileSync path (str data "\n")))
+
+
+(defn debug-println [x msg]
+  (spit "debug.out" (str msg x))
+  x)
+
+
+(defn debug-seq-println [msg x]
+  (spit "debug.out" (str msg x))
+  x)
+
+
+(defn http-get& [url query]
+  (let [ch (chan)
+        url (-> (c-url/url url)
+                (assoc :query query))]
+    (go
+      (.get request
+            (clj->js {:url (str url) :gzip true})
+            (fn [error response body]
+              (if error
+                (put! ch {:error (str error)})
+                (if (= (.-statusCode response) 200)
+                  (put! ch {:response response :body body})
+                  (put! ch {:error (str (.-statusCode response) " " body)}))))))
+    ch))
+
+
+;; Downloads the contents of a URL to a temp file.
+
+(defn download-url& [url]
+  (let [ch (chan)]
+    (go
+      (let [result (<! (http-get& url {}))]
+        (if (:error result)
+          (>! ch result)
+          (let [tmpfile (tmp/fileSync)
+                fd (.-fd tmpfile)]
+            (fs/writeSync fd (:body result))
+            (fs/closeSync fd)
+            (>! ch {:file (.-name tmpfile)})))))
+    ch))
+
+
+(defn set-status! [app text]
+  (set! (.-content (:status app)) (if text (str text) "")))
+
+
+(defn vrs-get-aircraft-image& [base-url aircraft]
+  (let [ch (chan)
+        icao (:icao aircraft)
+        reg (:reg aircraft)
+        query (cond-> {:icao icao :numThumbs 1}
+                reg (assoc :reg reg))
+        req-url (-> (c-url/url base-url "AirportDataThumbnails.json")
+                    (assoc :query query))
+        options (clj->js {:url req-url :gzip true})]
+    ;; (go
+    ;;   (.get request
+    ;;         options
+    ;;         (fn [error response body]
+    ;;           (if error
+    ;;             (>! ch {:error error})
+    ;;             (if (= (.-statusCode response) 200)
+
+    ;;               )
+    ;;             )
+    ;;           ))
+    ;;   )
+
+    ))
 
 
 (defn to-radians [a]
@@ -166,34 +238,31 @@
   (let [radar (:radar app)
         lat (:lat radar)
         lon (:lon radar)
-        url (-> (c-url/url base-url "AircraftList.json")
-                (assoc :query {:lat lat :lng lon}))
-        options (clj->js {:url (str url) :gzip true})
         ch (chan)]
     (go
-      (.get request
-            options
-            (fn [error response body]
-              (if error
-                (println "WOO ERROR" error response body)
-                (if (= (.-statusCode response) 200)
-                  (let [planes (vrs-parse-aircraft body app)]
-                    (put! ch planes))
-                  (println "Bad response from VRS:" (.-statusCode response) body))))))
+      (let [result (<! (http-get& (str (c-url/url base-url "AircraftList.json"))
+                                  {:lat lat :lng lon}))]
+        (if (:error result)
+          (>! ch result)
+          (let [planes (vrs-parse-aircraft (:body result) app)]
+            (>! ch {:planes planes})))))
     ch))
 
 
 (def radars
   {"yosemite" {:lat 34.133856404730224 :lon -118.19234294423293 :rpm 5}
-   "521circle7" {:lat 34.1576265 :lon -118.29006930000001 :rpm 5}})
+   "521circle7" {:lat 34.1576265 :lon -118.29006930000001 :rpm 15}})
 
 (defn get-radar [spec]
   (radars spec))
 
 
+(def max-age-ms (* 15 1000))
+
+
 (defn age->color [age]
   ;;'#a12f01'
-  (let [g (Math/round (* 255 (/ (- 20000 age) 20000)))
+  (let [g (Math/round (* 255 (/ (- max-age-ms age) max-age-ms)))
         g-str (-> g
                   Math/round
                   (.toString 16)
@@ -237,7 +306,7 @@
         [cx cy] (pos->canvas-coords airport radar (:radar-range-km app) canvas)
         brng (* (/ 180 Math/PI) (bearing radar airport))
         d (distance radar airport)
-        icon "#"]
+        icon "?"]
     (when (and (> cx 0) (> cy 0))
       (set! (.-fillStyle ctx) "green")
       (.fillText ctx icon cx cy)
@@ -258,7 +327,7 @@
     (->> hits
          (concat illuminated)
          (map #(assoc % :illuminated-age (- now (:illuminated-time %))))
-         (filter #(< (:illuminated-age %) (* 30 1000)))
+         (filter #(< (:illuminated-age %) max-age-ms))
          (sort-by :illuminated-age)
          reverse)))
 
@@ -289,23 +358,48 @@
                   (sort-by last)
                   (map butlast))]
     (when (seq (:hits app))
-      (.setData table (clj->js {:headers ["ICAO" "REG" "CALL" "SQWK" "ALT" " SPD" "DIST"] :data data})))))
+      (.setData table (clj->js {:headers ["ICAO" "REG" "CALL" "SQWK" "ALT" " SPD" "DIST"] :data data}))
+      (.select (.-rows table) 0))))
 
 
-(defn debug-println [x msg]
-  (spit "debug.out" (str msg x))
-  x)
+(defn change-selection-image! [app aircraft]
+  (if aircraft
+    (do
+      (set-status! app (str "Fetching thumbnail for " (or (:reg aircraft) (:icao aircraft))))
+      (vrs-get-aircraft-image& app aircraft))
+    (set-status! app "")))
+
+(def current-selection_ (atom nil))
+
+(defn update-selection [app]
+  (let [candidates (sort-by :distance (:hits app))
+        prev-selection @current-selection_]
+    (if (seq candidates)
+      (let [new-selection (first candidates)]
+        (when (not (= (:icao prev-selection) (:icao new-selection) ))
+          (change-selection-image! app new-selection))
+        (assoc app :selection (first candidates)))
+      (do
+        (when (not (nil? prev-selection))
+          (change-selection-image! app nil))
+        app))))
+
+
+(def previous-selection (atom nil))
+
+(defn render-image [app])
 
 
 (defn update-app [app now]
   (-> app
       (update :radar update-radar now)
-      (as-> app (update app :hits update-hits (:radar app) (:aircraft-truth app) now))))
+      (as-> app (update app :hits update-hits (:radar app) (:aircraft-truth app) now))
+      update-selection))
 
 
 (defn render-app [app]
-  (render-radar app)
   (render-info-table app)
+  (render-radar app)
   (render-aircrafts app)
   (render-airports app))
 
@@ -335,8 +429,8 @@
 
 
 (defn main [& args]
-  (let [screen (blessed/screen)
-        grid (bcontrib/grid. #js {"rows" 12 "cols" 12 "screen" screen})
+  (let [screen (blessed/screen (clj->js {:fullUnicode true}))
+        grid (bcontrib/grid. #js {"rows" 13 "cols" 12 "screen" screen})
         radar-canvas (.set grid 0 0 6 6 bcontrib/canvas
                            (clj->js {:label "SCOPE"}))
         table (.set grid 6 0 6 6 bcontrib/table
@@ -346,13 +440,16 @@
                               :label "CURRENT AICRAFT" }))
         image (.set grid 0 6 6 6 blessed/ANSIImage
                     (clj->js {:label "SELECTED IMAGE"}))
+        status (.set grid 12 0 1 12 blessed/Text)
         radar (get-radar "521circle7")
         vrs-url (cond-> (first args)
                   (not (.endsWith "/"))
                   (str "/"))
-        app_ (atom {:screen screen
+        app_ (atom {:vrs-url vrs-url
+                    :screen screen
                     :radar-canvas radar-canvas
                     :info-table table
+                    :status status
                     :radar radar
                     :radar-range-km initial-radar-range-km
                     :aircraft-truth []
@@ -365,8 +462,12 @@
                 (js/setTimeout tick 30)))]
       (js/setInterval
        #(go
-          (let [aircraft-truth (<! (vrs-get-aircraft& vrs-url @app_))]
-            (swap! app_ assoc :aircraft-truth aircraft-truth)))
+          (let [result (<! (vrs-get-aircraft& vrs-url @app_))]
+            (if (:error result)
+              (set-status! @app_ (:error result))
+              (do
+                (set-status! @app_ (str "Got " (count (:planes result)) " planes"))
+                (swap! app_ assoc :aircraft-truth (:planes result))))))
        1000)
       (add-controls app_)
       (.setImage image "/Users/wiseman/Desktop/001497187.jpg")

@@ -8,6 +8,7 @@
   "dependencies": {
     "blessed": "^0.1.81",
     "blessed-contrib": "^4.8.18",
-    "request": "^2.88.0"
+    "request": "^2.88.0",
+    "tmp": "^0.1.0"
   }
 }
